@@ -228,6 +228,52 @@ Two integration paths:
    versions). AUTO playbooks execute immediately; CONFIRM playbooks queue
    for an ANALYST/ADMIN approval in the console.
 
+### Flow-byte telemetry (exfiltration corroboration)
+
+The collector can aggregate pfSense `filterlog` entries into per-flow
+byte counters and emit `FLOW_BYTES` summary events (`bytes_sent`,
+`direction`, flow tuple). The backend uses these for R003 data
+exfiltration (>10 MB outbound per internal IP per 15 min) and the C004 /
+C005 / C009 attack correlations.
+
+**Option A — filterlog aggregation (implemented).** No extra pfSense
+configuration beyond logging: enable *Log* on the outbound WAN rules you
+want measured (`Firewall > Rules > WAN`). The collector sums each logged
+packet's data length per flow (src/dst/proto/ports) over a sliding window
+and ships one summary per flow:
+
+```
+FLOW_AGGREGATION_ENABLED=true   # default; set false to disable
+FLOW_WINDOW_SECS=60             # aggregation window
+FLOW_MIN_BYTES=65536            # flows below this are not reported
+```
+
+Caveats: bytes are IP-payload only (no headers), and only packets matching
+a *logged* rule are counted — traffic on unlogged pass rules is invisible.
+This is fit for threshold-style exfiltration corroboration, not billing-
+grade accounting.
+
+**Option B — exact state-table counters (upgrade path, not yet
+implemented).** For exact, header-inclusive, all-traffic byte counts, poll
+the firewall's state table instead of logs:
+
+- **pfSense/FreeBSD:** `pfctl -ss` shows per-state byte counters
+  (`[13058654/123456]`). Requires SSH/remote-exec access from the collector
+  (dedicated low-privilege user + `sudo pfctl -ss`), which the collector
+  does not have today.
+- **Linux gateway alternative:** `conntrack -L` (conntrack-tools) prints
+  per-flow `bytes=`/`packets=` counters for NAT'd flows; same remote-exec
+  requirement.
+
+What an Option B implementation would need: a collector poller (new
+`src/flow/` backend next to the current log aggregator), SSH or agent-based
+transport with credentials, and mapping results onto the same `FLOW_BYTES`
+schema (`bytes_sent`, `direction`, `source_ip`, `destination_ip`, ports,
+proto) so the backend rule and correlations need no changes. Prefer Option
+B when exact accounting matters (compliance, high-volume links where
+log-only coverage is insufficient); Option A covers the common
+"prove an exfil sequence happened" use case with zero new infrastructure.
+
 ### Fortinet FortiGate
 
 1. **Log ingestion** — FortiGate → collector via syslog:
