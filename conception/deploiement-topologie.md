@@ -235,10 +235,10 @@ Two integration paths:
    protocol `forwarding-to-syslogd`, port 514 (or use the collector's
    firewall parser; FortiGate CSV/syslog formats are handled by the
    firewall normalizer).
-2. **SOAR response** — *not yet implemented as an agent.* The backend
-   firewall-agent interface (`src/soar/agents/firewall-agent.interface.ts`)
-   is the extension point. A FortiGate agent would implement the same
-   methods against the FortiOS REST API:
+2. **SOAR response** — implemented as `FortiGateAgentService`
+   (`siem-backend/src/soar/agents/fortigate-agent.service.ts`), selected
+   with `SOAR_FIREWALL_PROVIDER=fortigate`. It implements the same
+   `IFirewallAgent` methods against the FortiOS REST API:
 
    ```
    # FortiGate side (example)
@@ -246,12 +246,30 @@ Two integration paths:
    # execute api/v2/monitor/system/status to verify
    ```
 
-   Typical calls: `POST /api/v2/cmdb/firewall/address` (blocked-address
-   objects), `POST /api/v2/cmdb/firewall/policy` (deny rules), with
-   `Authorization: Bearer <token>` obtained from
-   `/api/v2/monitor/system/api-token`. Until the agent exists, point
-   `SOAR_FIREWALL_PROVIDER` at `pfsense` or `dry-run` and use FortiGate only
-   for telemetry.
+   All managed objects are prefixed `SmartSIEM-` (address objects,
+   deny policies, and port service objects) so `listRules` /
+   `deleteRule` / unblocking stay scoped to what the agent created:
+
+   - `block_ip` → address object `SmartSIEM-Block-<ip>` + deny policy
+     (source = object, destination = `all`)
+   - `isolate_host` → address object + two policies (host→any and
+     any→host) for bidirectional isolation
+   - `block_port` → address object + service object
+     (`SmartSIEM-Svc-<port>-<tcp|udp>`) + deny policy
+
+   Auth is a Bearer token (`FORTIGATE_API_TOKEN`); create one under
+   `System > Administrators > REST API Admin` or fetch it from
+   `/api/v2/monitor/system/api-token`. Configuration:
+
+   | Variable | Purpose |
+   |---|---|
+   | `SOAR_FIREWALL_PROVIDER` | `fortigate` to activate this agent |
+   | `FORTIGATE_URL` | FortiGate management URL (e.g. `https://192.168.37.136`) |
+   | `FORTIGATE_API_TOKEN` | Bearer token for the REST API |
+   | `FORTIGATE_TIMEOUT` | Request timeout in ms (default `10000`) |
+
+   Note: deny policies are appended to the FortiGate policy list —
+   verify ordering if a broad allow policy sits above them.
 
 ## 5. Backend configuration
 
